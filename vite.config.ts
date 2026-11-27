@@ -2,17 +2,27 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 /**
- * 站点挂在根路径 https://bysking.github.io/ 下，所以 base 恒为 '/'，
- * 产物里的资源是绝对路径 /assets/xxx.js。
+ * 站点地址由仓库名决定：
+ *   - 仓库叫 bysking.github.io  → 站点在根路径，base = '/'
+ *   - 仓库叫 <其它名字>          → 站点在 /<仓库名>/ 子路径，base = '/<仓库名>/'
  *
- * 注意「源码仓库名」与「站点 URL」在这里是脱钩的：源码仓库叫 bysking-pages，
- * 但 .github/workflows/deploy.yml 把构建产物推给 bysking.github.io 仓库，
- * 由那个仓库发布根路径。只有 bysking.github.io 这个特定名字能占用根路径。
+ * 所以 base 不写死，由流水线里 configure-pages 输出的真实 base_path 通过
+ * VITE_BASE_PATH 传进来；本地 dev/build 走下面的 DEFAULT_BASE。
+ * 这样仓库改名、或绑自定义域名（base_path 为空串）都不用改这里。
  *
- * 若以后改挂到 /bysking-pages/ 子路径，必须同时改两处：这里 base，以及
- * deploy.yml 里的部署目标仓库。
+ * 注意空串必须归到 '/'：绑自定义域名时 configure-pages 输出就是空串，说明站点
+ * 在根路径；把它当成"没传值"而回退到子路径，会导致所有资源 404。
  */
+const DEFAULT_BASE = '/'
+
+function normalizeBase(raw: string | undefined): string {
+  if (raw === undefined) return DEFAULT_BASE
+  const trimmed = raw.replace(/^\/+|\/+$/g, '')
+  return trimmed ? `/${trimmed}/` : '/'
+}
+
+// https://vite.dev/config/
 export default defineConfig({
-  base: '/',
+  base: normalizeBase(process.env.VITE_BASE_PATH),
   plugins: [react()],
 })
