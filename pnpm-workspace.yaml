@@ -1,0 +1,9 @@
+# pnpm 11.10+ 的所有 workspace 级配置都收敛到这里（package.json 的 pnpm 字段已被弃用）。
+
+# pnpm 默认 minimumReleaseAge=1440（新发布的版本要等 1 天才允许安装）。
+# 这个默认会让「刚发布就升级依赖」在 CI 上随机失败：本地 pnpm 会悄悄把该版本
+# 写进 minimumReleaseAgeExclude，而 CI 用 --frozen-lockfile 校验 lockfile 时
+# 直接报 ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION。
+# 这个仓库只有构建期依赖、不产生运行时网络请求，所以关掉时间闸门，换取
+# 本地与 CI 行为一致（代价是失去"新包恶意发布"的窗口保护，靠 lockfile diff 把关）。
+minimumReleaseAge: 0

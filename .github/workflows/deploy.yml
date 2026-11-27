@@ -1,0 +1,69 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 支持手动点按钮触发
+
+# GitHub Pages 部署必须的三项权限，缺一个就报 403
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署，避免两次 push 抢着发布
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v7
+
+      # 必须放在构建之前：把 Pages 真实的 base_path 传给 vite build，
+      # 这样仓库改名 / 绑自定义域名都不需要改 vite.config.ts
+      - name: 配置 Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      # 顺序不能换：setup-node 的 cache: pnpm 会去问 pnpm 的 store 路径，
+      # 若 pnpm 还没装，会报 "Unable to locate executable file: pnpm"。且当前
+      # pnpm 12 自身不依赖 Node，所以先装 pnpm 是安全的。
+      # 不传 version：让 action 读 package.json 的 packageManager 字段。
+      # 两处都写会因版本号字面不一致（12 vs 12.18.0）直接报错。
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: 安装 Node 并启用 pnpm 缓存
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm # 自动缓存 pnpm store，二次构建快很多
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile # 严格按 lockfile，锁版本一致
+
+      - name: 构建
+        run: pnpm build
+        env:
+          NODE_ENV: production
+          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist # vite 默认输出 dist
+
+  deploy:
+    needs: build # 必须等 build 成功
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
