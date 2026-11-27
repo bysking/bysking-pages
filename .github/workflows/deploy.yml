@@ -5,33 +5,25 @@ on:
     branches: [main]
   workflow_dispatch: # 支持手动点按钮触发
 
-# GitHub Pages 部署必须的三项权限，缺一个就报 403
+# 只读源码仓库；部署靠 PAGES_DEPLOY_TOKEN 推到 bysking.github.io 仓库，
+# 所以这里不需要 pages/id-token 权限（那是给 actions/deploy-pages 用的）。
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# 同一时间只跑一个部署，避免两次 push 抢着发布
+# 同一时间只跑一个部署，避免两次 push 抢着覆盖远端仓库
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: 拉取代码
+      - name: 拉取源码
         uses: actions/checkout@v7
 
-      # 必须放在构建之前：把 Pages 真实的 base_path 传给 vite build，
-      # 这样仓库改名 / 绑自定义域名都不需要改 vite.config.ts
-      - name: 配置 Pages
-        id: pages
-        uses: actions/configure-pages@v6
-
       # 顺序不能换：setup-node 的 cache: pnpm 会去问 pnpm 的 store 路径，
-      # 若 pnpm 还没装，会报 "Unable to locate executable file: pnpm"。且当前
-      # pnpm 12 自身不依赖 Node，所以先装 pnpm 是安全的。
+      # 若 pnpm 还没装，会报 "Unable to locate executable file: pnpm"。
       # 不传 version：让 action 读 package.json 的 packageManager 字段。
       # 两处都写会因版本号字面不一致（12 vs 12.18.0）直接报错。
       - name: 安装 pnpm
@@ -50,20 +42,29 @@ jobs:
         run: pnpm build
         env:
           NODE_ENV: production
-          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
 
-      - name: 上传构建产物
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: dist # vite 默认输出 dist
+      # 把 dist 推到 bysking.github.io 仓库的 master 分支，那是 Pages 的发布源，
+      # 推送即发布。用 --force 而不是保留历史：产物目录不是源码仓库，留历史只会
+      # 让仓库无限膨胀。orphan 提交 + force push 每次都是干净的一次提交。
+      - name: 发布到 bysking.github.io
+        env:
+          # 需要 repo 权限的 PAT，存在本仓库 Secret 里。GITHUB_TOKEN 无权写别的仓库。
+          TOKEN: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          TARGET_REPO: bysking/bysking.github.io
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::缺少 Secret PAGES_DEPLOY_TOKEN，无法推送到 ${TARGET_REPO}"
+            exit 1
+          fi
 
-  deploy:
-    needs: build # 必须等 build 成功
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: 发布到 Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          # 产物目录只保留 dist 内容。404.html 已在 build 阶段由 scripts/spa-fallback.mjs 生成
+          cd dist
+          git init -q -b master
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "deploy: ${GITHUB_SHA::7} 由 ${GITHUB_REPOSITORY} 构建"
+          git push --force -q \
+            "https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git" master
+          echo "已发布到 https://bysking.github.io/"
